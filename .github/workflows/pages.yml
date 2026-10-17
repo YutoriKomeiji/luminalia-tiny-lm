@@ -26,8 +26,6 @@ jobs:
           node tests/smoke.cjs
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
-        with:
-          enablement: true
       - name: Stage static site
         run: |
           mkdir -p _site
