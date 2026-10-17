@@ -15,8 +15,8 @@ const document = {
   }
 };
 const context = vm.createContext({document, console, Float64Array, Math, Number, Set, Map, Array, Error, Blob, URL, Date, setTimeout});
-vm.runInContext(found[1] + '\n globalThis.testSurface = {init, trainOne, forward, soft, rng};', context, {timeout: 5000});
-const {init, trainOne, forward, soft} = context.testSurface;
+vm.runInContext(found[1] + '\n globalThis.testSurface = {init, trainOne, forward, soft, rng, averageLoss};', context, {timeout: 5000});
+const {init, trainOne, forward, soft, averageLoss} = context.testSurface;
 const text = 'abcabcabcabcabcabc';
 const m = init(text, 42);
 assert.ok(m.V >= 4);
@@ -32,10 +32,12 @@ const testLoss = () => {
   return sum / count;
 };
 const before = testLoss();
+assert.ok(Math.abs(before - averageLoss(m,indices)) < 1e-10, "UI loss matches independent loss measurement");
 for (let epoch = 0; epoch < 130; epoch++) {
   for (let i = 0; i < indices.length - 3; i++) trainOne(m, indices.slice(i, i + 3), indices[i + 3], 0.05);
 }
 const after = testLoss();
+assert.ok(Math.abs(after - averageLoss(m,indices)) < 1e-10, "UI loss remains accurate after training");
 assert.ok(Number.isFinite(after) && after < before * 0.55, 'learning must reduce loss');
 assert.equal(soft([1, 2, 3]).reduce((a, b) => a + b, 0).toFixed(8), '1.00000000');
 assert.throws(() => init('aaaaaa', 42), /2〜150/);
