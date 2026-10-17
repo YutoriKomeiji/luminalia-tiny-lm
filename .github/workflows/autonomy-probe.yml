@@ -1,0 +1,24 @@
+name: Luminalia T1 bounded autonomy probe
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 2 * * 1"
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Independently compare bounded training candidates
+        run: node experiments/autonomy_probe.cjs
+      - name: Store evaluation receipt only
+        uses: actions/upload-artifact@v4
+        with:
+          name: tiny-lm-t1-evaluation
+          path: reports/t1-latest.json
+          retention-days: 14
