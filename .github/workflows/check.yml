@@ -18,6 +18,8 @@ jobs:
         run: |
           node -e "const fs=require('fs'); const html=fs.readFileSync('index.html','utf8'); const m=html.match(/<script>([\\s\\S]*?)<\\/script>/); if(!m) process.exit(2); fs.writeFileSync('/tmp/tiny-lm.js',m[1])"
           node --check /tmp/tiny-lm.js
+      - name: Verify actual neural learning (deterministic offline smoke)
+        run: node tests/smoke.cjs
       - name: Assert public page is self-contained
         run: |
           node -e "const s=require('fs').readFileSync('index.html','utf8'); if(/<script[^>]+src=|<link[^>]+href=|fetch\s*\(|XMLHttpRequest/.test(s)) process.exit(1);"
