@@ -29,7 +29,7 @@ AIがAIを作るなら、品質をどう確かめるのでしょう。
 <button id="generate" disabled>続きを生成</button><button id="export" disabled>重みを保存</button><button id="import">重みを読み込む</button><input id="file" type="file" accept=".json,application/json" hidden>
 <pre id="output">まだ生成していません。</pre></section>
 <section class="panel"><h2>構造と限界</h2>
-<p id="info">モデル未初期化</p><p>直前の3文字 → 8次元文字埋め込み → 24ユニットtanh → softmax。誤差逆伝播とSGDによって次の1文字を予測します。これはTransformerでも大規模LLMでもなく、汎用的な理解・推論能力はありません。</p></section>
+<p id="info">モデル未初期化</p><p><small>「全文損失」は同じ学習テキスト上の測定値です。下がっても未知の文章への汎化は保証しません。</small></p><p>直前の3文字 → 8次元文字埋め込み → 24ユニットtanh → softmax。誤差逆伝播とSGDによって次の1文字を予測します。これはTransformerでも大規模LLMでもなく、汎用的な理解・推論能力はありません。</p></section>
 <footer><small>All training is local. No telemetry or network requests. Public research source: <a href="https://github.com/YutoriKomeiji/luminalia-tiny-lm">GitHub</a></small></footer>
 </main>
 <script>
@@ -65,6 +65,14 @@ function trainOne(m,ids,target,lr){
  for(let k=0;k<K;k++)for(let d=0;d<D;d++)m.E[ids[k]*D+d]-=lr*gx[k*D+d];
  return loss;
 }
+function averageLoss(m,tokens){
+ let loss=0,n=0;
+ for(let i=K;i<tokens.length;i++){
+  const p=soft(forward(m,tokens.slice(i-K,i)).logits);
+  loss-=Math.log(Math.max(1e-12,p[tokens[i]]));n++;
+ }
+ return n?loss/n:NaN;
+}
 function info(m){const n=m.E.length+m.W.length+m.b.length+m.U.length+m.c.length;$("info").textContent=`語彙 ${m.V} / 学習パラメータ ${n.toLocaleString()} / 更新 ${m.steps}`}
 $("train").onclick=async()=>{
  if(running)return;
@@ -74,13 +82,13 @@ $("train").onclick=async()=>{
   if(!Number.isInteger(steps)||steps<50||steps>10000)throw Error("学習ステップを50〜10000で指定してください");
   const m=init(text,$("seed").value),map=new Map(m.vocab.map((v,i)=>[v,i])),tokens=Array.from(text,c=>map.get(c));
   if(tokens.length<6)throw Error("テキストが短すぎます");
-  model=m;const r=rng(Number($("seed").value)+1009);let loss=0,count=0;
+  model=m;const initialLoss=averageLoss(m,tokens),r=rng(Number($("seed").value)+1009);let loss=0,count=0;
   for(let i=0;i<steps&&!stop;i++){
    const t=Math.floor(r()*(tokens.length-K)),lr=.045/(1+i/2500);
    loss+=trainOne(m,tokens.slice(t,t+K),tokens[t+K],lr);count++;m.steps++;
    if(count===100||i===steps-1){$("status").textContent=`学習 ${m.steps}/${steps} · 平均損失 ${(loss/count).toFixed(3)}`;loss=0;count=0;info(m);await new Promise(resolve=>setTimeout(resolve,0))}
   }
-  $("status").textContent+=(stop?" · 停止":" · 完了");info(m);
+  const finalLoss=averageLoss(m,tokens);$("status").textContent=`学習 ${m.steps}/${steps} · 全文損失 ${initialLoss.toFixed(3)} → ${finalLoss.toFixed(3)} · ${stop?"停止":"完了"}`;info(m);
  }catch(e){$("status").textContent="エラー："+e.message}
  finally{running=false;$("train").disabled=false;$("stop").disabled=true;$("generate").disabled=!model;$("export").disabled=!model}
 };
