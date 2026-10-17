@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Luminalia Tiny LM — Browser Lab</title>
+<style>
+:root{color-scheme:dark;font:16px/1.6 system-ui}*{box-sizing:border-box}
+body{background:#10131e;color:#f3f4ff;margin:0}main{max-width:840px;margin:auto;padding:24px 16px 50px}
+h1{font-size:clamp(1.6rem,5vw,2.5rem)}.panel{background:#1b2031;border:1px solid #38405b;border-radius:16px;margin:15px 0;padding:18px}
+p{color:#c6cee1}label{display:block;margin:8px 0 4px}textarea,input{background:#101525;color:white;border:1px solid #56617f;border-radius:8px;padding:10px;font:inherit;width:100%}textarea{height:155px}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media(max-width:560px){.row{grid-template-columns:1fr}}
+button{border:0;background:#b4a1ff;color:#121023;padding:11px 15px;font-weight:bold;border-radius:9px;margin:9px 7px 4px 0;cursor:pointer}
+button:disabled{opacity:.5}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#101525;border-radius:10px;padding:15px;min-height:80px}
+small{color:#b4bed2}a{color:#d1c6ff}
+</style>
+<main>
+<p>LUMINALIA 9 SISTERS · TINY MODEL RESEARCH</p>
+<h1>ブラウザで育てる、小さな言語モデル</h1>
+<p>実際に学習できるニューラルネット。学習も生成も端末内で実行します。外部サービス・APIキー・通信不要。</p>
+<section class="panel"><h2>1. 学習</h2><label for="corpus">学習テキスト</label>
+<textarea id="corpus">こんにちは。わたしは小さな言語モデルです。
+今日は星がきれいです。あしたは何を作ろう。
+ルミナリアの九姉妹は、記録を読み、考え、試し、確かめます。
+AIがAIを作るなら、品質をどう確かめるのでしょう。
+失敗は隠さず、次の研究につなげます。</textarea>
+<div class="row"><div><label for="steps">学習ステップ（50〜10000）</label><input id="steps" type="number" value="900" min="50" max="10000"></div><div><label for="seed">乱数シード</label><input id="seed" type="number" value="42"></div></div>
+<button id="train">初期化して学習</button><button id="stop" disabled>停止</button><p id="status" role="status">未学習</p>
+</section>
+<section class="panel"><h2>2. 生成</h2>
+<div class="row"><div><label for="prompt">書き出し</label><input id="prompt" value="今日は"></div><div><label for="temp">温度（0.2〜2.0）</label><input id="temp" type="number" min=".2" max="2" step=".1" value=".8"></div></div>
+<button id="generate" disabled>続きを生成</button><button id="export" disabled>重みを保存</button><button id="import">重みを読み込む</button><input id="file" type="file" accept=".json,application/json" hidden>
+<pre id="output">まだ生成していません。</pre></section>
+<section class="panel"><h2>構造と限界</h2>
+<p id="info">モデル未初期化</p><p>直前の3文字 → 8次元文字埋め込み → 24ユニットtanh → softmax。誤差逆伝播とSGDによって次の1文字を予測します。これはTransformerでも大規模LLMでもなく、汎用的な理解・推論能力はありません。</p></section>
+<footer><small>All training is local. No telemetry or network requests. Public research source: <a href="https://github.com/YutoriKomeiji/luminalia-tiny-lm">GitHub</a></small></footer>
+</main>
+<script>
+"use strict";
+const $=id=>document.getElementById(id),K=3,D=8,H=24;
+let model=null,running=false,stop=false;
+function rng(seed){let s=(Number(seed)>>>0)||1;return()=>{s^=s<<13;s^=s>>>17;s^=s<<5;return(s>>>0)/4294967296}}
+function arr(n,r,scale){return Float64Array.from({length:n},()=>((r()*2)-1)*scale)}
+function init(text,seed){
+ const chars=[...new Set(Array.from(text))].filter(x=>x!=="\0").sort();
+ if(chars.length<2||chars.length>150)throw Error("異なる文字が2〜150種類必要です");
+ const vocab=["\0",...chars],V=vocab.length,r=rng(seed);
+ return{vocab,V,E:arr(V*D,r,.1),W:arr(K*D*H,r,.07),b:new Float64Array(H),U:arr(H*V,r,.08),c:new Float64Array(V),steps:0};
+}
+function soft(logits,temp=1){const max=Math.max(...logits),v=logits.map(x=>Math.exp((x-max)/temp)),sum=v.reduce((a,b)=>a+b,0);return v.map(x=>x/sum)}
+function forward(m,ids){
+ const x=new Float64Array(K*D);
+ for(let k=0;k<K;k++)for(let d=0;d<D;d++)x[k*D+d]=m.E[ids[k]*D+d];
+ const h=new Float64Array(H);
+ for(let j=0;j<H;j++){let a=m.b[j];for(let q=0;q<K*D;q++)a+=x[q]*m.W[q*H+j];h[j]=Math.tanh(a)}
+ const logits=Array.from({length:m.V},(_,v)=>{let a=m.c[v];for(let j=0;j<H;j++)a+=h[j]*m.U[j*m.V+v];return a});
+ return{x,h,logits};
+}
+function trainOne(m,ids,target,lr){
+ const {x,h,logits}=forward(m,ids),p=soft(logits),loss=-Math.log(Math.max(1e-12,p[target])),g=p.slice();g[target]-=1;
+ const gh=new Float64Array(H);
+ for(let j=0;j<H;j++){let a=0;for(let v=0;v<m.V;v++)a+=m.U[j*m.V+v]*g[v];gh[j]=a*(1-h[j]*h[j])}
+ const gx=new Float64Array(K*D);
+ for(let q=0;q<K*D;q++){let a=0;for(let j=0;j<H;j++)a+=m.W[q*H+j]*gh[j];gx[q]=a}
+ for(let j=0;j<H;j++){for(let v=0;v<m.V;v++)m.U[j*m.V+v]-=lr*h[j]*g[v];m.b[j]-=lr*gh[j]}
+ for(let v=0;v<m.V;v++)m.c[v]-=lr*g[v];
+ for(let q=0;q<K*D;q++)for(let j=0;j<H;j++)m.W[q*H+j]-=lr*x[q]*gh[j];
+ for(let k=0;k<K;k++)for(let d=0;d<D;d++)m.E[ids[k]*D+d]-=lr*gx[k*D+d];
+ return loss;
+}
+function info(m){const n=m.E.length+m.W.length+m.b.length+m.U.length+m.c.length;$("info").textContent=`語彙 ${m.V} / 学習パラメータ ${n.toLocaleString()} / 更新 ${m.steps}`}
+$("train").onclick=async()=>{
+ if(running)return;
+ running=true;stop=false;$("train").disabled=true;$("generate").disabled=true;$("export").disabled=true;$("stop").disabled=false;
+ try{
+  const text=$("corpus").value,steps=Number($("steps").value);
+  if(!Number.isInteger(steps)||steps<50||steps>10000)throw Error("学習ステップを50〜10000で指定してください");
+  const m=init(text,$("seed").value),map=new Map(m.vocab.map((v,i)=>[v,i])),tokens=Array.from(text,c=>map.get(c));
+  if(tokens.length<6)throw Error("テキストが短すぎます");
+  model=m;const r=rng(Number($("seed").value)+1009);let loss=0,count=0;
+  for(let i=0;i<steps&&!stop;i++){
+   const t=Math.floor(r()*(tokens.length-K)),lr=.045/(1+i/2500);
+   loss+=trainOne(m,tokens.slice(t,t+K),tokens[t+K],lr);count++;m.steps++;
+   if(count===100||i===steps-1){$("status").textContent=`学習 ${m.steps}/${steps} · 平均損失 ${(loss/count).toFixed(3)}`;loss=0;count=0;info(m);await new Promise(resolve=>setTimeout(resolve,0))}
+  }
+  $("status").textContent+=(stop?" · 停止":" · 完了");info(m);
+ }catch(e){$("status").textContent="エラー："+e.message}
+ finally{running=false;$("train").disabled=false;$("stop").disabled=true;$("generate").disabled=!model;$("export").disabled=!model}
+};
+$("stop").onclick=()=>{stop=true};
+$("generate").onclick=()=>{
+ if(!model)return;const m=model,map=new Map(m.vocab.map((v,i)=>[v,i])),prefix=$("prompt").value,ids=Array.from(prefix,c=>map.get(c)??0);
+ let context=Array(K).fill(0).concat(ids).slice(-K),out=prefix;
+ const temp=Math.max(.2,Math.min(2,Number($("temp").value)||.8)),r=rng(Date.now());
+ for(let i=0;i<100;i++){const p=soft(forward(m,context).logits,temp);let x=r(),v=p.length-1;for(let k=0;k<p.length;k++){x-=p[k];if(x<=0){v=k;break}}context=[...context.slice(1),v];if(v!==0)out+=m.vocab[v]}
+ $("output").textContent=out;
+};
+$("export").onclick=()=>{
+ if(!model)return;const m=model,data={format:"luminalia-tiny-lm-v1",K,D,H,vocab:m.vocab,steps:m.steps};
+ for(const key of["E","W","b","U","c"])data[key]=Array.from(m[key]);
+ const url=URL.createObjectURL(new Blob([JSON.stringify(data)],{type:"application/json"})),a=document.createElement("a");
+ a.href=url;a.download="tiny-lm-weights.json";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+};
+$("import").onclick=()=>$("file").click();
+$("file").onchange=async e=>{
+ try{const f=e.target.files?.[0];if(!f)return;if(f.size>2000000)throw Error("ファイルが大きすぎます");
+ const data=JSON.parse(await f.text()),V=data.vocab?.length;
+ if(data.format!=="luminalia-tiny-lm-v1"||data.K!==K||data.D!==D||data.H!==H||!Number.isInteger(V)||V<3||V>151||!Array.isArray(data.vocab)||!data.vocab.every(x=>typeof x==="string"))throw Error("形式不一致");
+ const m={vocab:data.vocab,V,steps:Number.isSafeInteger(data.steps)&&data.steps>=0?data.steps:0},sizes={E:V*D,W:K*D*H,b:H,U:H*V,c:V};
+ for(const [key,n]of Object.entries(sizes)){if(!Array.isArray(data[key])||data[key].length!==n||!data[key].every(x=>typeof x==="number"&&Number.isFinite(x)))throw Error(key+" が不正");m[key]=Float64Array.from(data[key])}
+ model=m;info(m);$("status").textContent="重み読込完了";$("generate").disabled=false;$("export").disabled=false;
+ }catch(err){$("status").textContent="読込失敗："+err.message}finally{e.target.value=""}
+};
+</script></html>
