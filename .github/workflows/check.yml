@@ -1,0 +1,23 @@
+name: Tiny LM static checks
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  javascript-syntax:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Syntax check embedded JavaScript
+        run: |
+          node -e "const fs=require('fs'); const html=fs.readFileSync('index.html','utf8'); const m=html.match(/<script>([\\s\\S]*?)<\\/script>/); if(!m) process.exit(2); fs.writeFileSync('/tmp/tiny-lm.js',m[1])"
+          node --check /tmp/tiny-lm.js
+      - name: Assert public page is self-contained
+        run: |
+          node -e "const s=require('fs').readFileSync('index.html','utf8'); if(/<script[^>]+src=|<link[^>]+href=|fetch\s*\(|XMLHttpRequest/.test(s)) process.exit(1);"
