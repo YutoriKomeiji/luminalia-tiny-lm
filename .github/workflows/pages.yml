@@ -1,0 +1,41 @@
+name: Deploy Tiny LM to GitHub Pages
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify embedded JavaScript
+        run: |
+          node -e "const fs=require('fs'),s=fs.readFileSync('index.html','utf8'),m=s.match(/<script>([\\s\\S]*?)<\\/script>/);if(!m)process.exit(1);fs.writeFileSync('/tmp/tiny-lm.js',m[1])"
+          node --check /tmp/tiny-lm.js
+          node tests/smoke.cjs
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - name: Stage static site
+        run: |
+          mkdir -p _site
+          cp index.html _site/
+          cp README.md LICENSE _site/
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - name: Deploy site
+        id: deployment
+        uses: actions/deploy-pages@v4
